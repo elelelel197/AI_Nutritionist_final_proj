@@ -47,7 +47,7 @@ class Simulator:
         food_types_names = cursor_food_nutrition.fetchall()
         conn_food_nutrition.close()
 
-        new_users = [amount]
+        new_users = [None] * amount
         for i in range(amount):
             new_users[i] = User(
                 id = id_list[i],
@@ -65,13 +65,16 @@ class Simulator:
                 cursor_user_gt.execute('''
                     INSERT INTO users_preference (id, food_types, food_names, food_preferences)
                     VALUES (?, ?, ?, ?)
-                    INSERT INTO users_activity_level (id, activity_level)
-                    VALUES (?, ?)
                     ''', (new_users[i].id, 
                           food_tp_nm[0], 
                           food_tp_nm[1], 
-                          np.random.rand(), 
-                          new_users[i].id, 
+                          np.random.rand()
+                          )
+                    )
+                cursor_user_gt.execute('''
+                    INSERT INTO users_activity_level (id, activity_level)
+                    VALUES (?, ?)
+                    ''', (new_users[i].id, 
                           np.random.choice(['sedentary', 'lightly active', 'moderately active', 'very active', 'super active'])
                           )
                     )
@@ -83,6 +86,7 @@ class Simulator:
 
 
     # Simulate meal logging for a user based on meal recommendations
+    # Returns the actual meal consumed by the user
     def simulate_meal_logging(self, user: User, recommendation: Meal):
         conn_user_gt = sql.connect('user_gt.db')
         cursor_user_gt = conn_user_gt.cursor()
@@ -94,8 +98,9 @@ class Simulator:
                 WHERE id = ? AND food_names = ?
                 ''', (user.id, food)
                 )
-            food_type = cursor_user_gt.fetchone()[0]
-            food_preference = cursor_user_gt.fetchone()[1]
+            result = cursor_user_gt.fetchone()
+            food_type = result[0]
+            food_preference = result[1]
             if np.random.rand() < food_preference:
                 # User eats more of preferred food
                 actual_meal.food_items_quantity[food] *= np.random.normal(loc=food_preference + 0.5, scale=CONSUMED_FOOD_QUANTITY_NOISE_STDDEV)
@@ -115,7 +120,8 @@ class Simulator:
                 substitution_preference = substitution_food_with_preference[1]
                 actual_meal.food_items_quantity[substitution_food] = actual_meal.food_items_quantity.pop(food) * np.random.normal(loc=substitution_preference + 0.5, scale=CONSUMED_FOOD_QUANTITY_NOISE_STDDEV)
         conn_user_gt.close()
-        print(f"Meal logged for user {user.id}.") 
+        print(f"Meal logged for user {user.id}.")
+        return actual_meal 
 
 
     # Simulate weight change over a period based on caloric intake and activity level
@@ -125,7 +131,7 @@ class Simulator:
         cursor_user_gt.execute('''
             SELECT * from users_acitivity_level                   
             WHERE id = ?
-            ''', (user.id)
+            ''', (user.id,)
             )
         user_activity_level = cursor_user_gt.fetchone()[1]
         conn_user_gt.close()
@@ -134,7 +140,7 @@ class Simulator:
         # Sampling N times and averaging: The average’s variability decreases as N increases (by Central Limit Theorem)
         daily_distortions = np.random.uniform(ACTIVITY_LEVELS_RANDOM_DISTORTION_RANGE[0], ACTIVITY_LEVELS_RANDOM_DISTORTION_RANGE[1], days_passed)
         activity_level_random_distortion = np.mean(daily_distortions)
-        if(user_activity_level == 'sedentary' & activity_level_random_distortion < 1):
+        if(user_activity_level == 'sedentary' and activity_level_random_distortion < 1):
             activity_level_random_distortion = 1
         elif(user_activity_level == 'super active' & activity_level_random_distortion > 1):
             activity_level_random_distortion = 1
