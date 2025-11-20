@@ -19,6 +19,10 @@ def validate_user_input(height, weight, age, target_weight):
     if target_weight <= 0:
         raise ValueError("Target weight must be greater than zero.")
 
+def calculate_caloric_gain_loss_to_weight_change(caloric_gain_loss: float):
+    # Approximately 7700 calories lead to 1 kg of weight gain
+    return caloric_gain_loss / 7700
+
 def calculate_daily_caloric_needs(weight, height, age, sex, activity_level):
     if sex not in ['male', 'female']:
         raise ValueError("Sex must be 'male' or 'female'.")
