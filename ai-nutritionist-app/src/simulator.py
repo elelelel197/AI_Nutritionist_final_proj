@@ -31,9 +31,10 @@ class Simulator:
 
     # Create multiple users with random attributes also with food preferences, activity levels
     def generate_user(self, amount=1):
-
+        # Generate random UUIDs for users
         id_list = self.create_random_id(amount)
 
+        # Connect to the user_gt and food_nutrition databases
         conn_user_gt = sql.connect('user_gt.db')
         cursor_user_gt = conn_user_gt.cursor()
         print("user_gt db connected")
@@ -41,12 +42,14 @@ class Simulator:
         cursor_food_nutrition = conn_food_nutrition.cursor()
         print("food_nutrition db connected")
 
+        # Fetch all food types and names from food_nutrition database
         cursor_food_nutrition.execute('''
             SELECT food_type, food_name FROM food_nutrition
         ''')
         food_types_names = cursor_food_nutrition.fetchall()
         conn_food_nutrition.close()
 
+        # Create users and insert their preferences and activity levels into the user.gt database
         new_users = [None] * amount
         for i in range(amount):
             new_users[i] = User(
@@ -87,7 +90,7 @@ class Simulator:
 
     # Simulate meal logging for a user based on meal recommendations
     # Returns the actual meal consumed by the user
-    def simulate_meal_logging(self, user: User, recommendation: Meal):
+    def simulate_meal_consumption(self, user: User, recommendation: Meal):
         conn_user_gt = sql.connect('user_gt.db')
         cursor_user_gt = conn_user_gt.cursor()
         food_items = recommendation.food_items_quantity.keys()
