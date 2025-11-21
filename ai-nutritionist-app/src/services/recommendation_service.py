@@ -1,452 +1,373 @@
-from typing import List, Dict, Tuple, Optional
 import sqlite3
-import pandas as pd
-from datetime import datetime, timedelta
-import numpy as np
+from typing import List, Dict, Optional, Any
+import math
+
+# 假設 MealTracker 位於 meal_tracker.py 中並已實作 get_today_intake()
+# from meal_tracker import MealTracker
 
 class RecommendationService:
-    def __init__(self, db_path: str):
+    """
+    改良版 RecommendationService
+
+    - 與 MealTracker 合作（傳入 MealTracker 實例以取得今日攝入）
+    - food_nutrition 資料表應以 per_100g 為單位（見 MealTracker 實作）
+    - recommended_intake 表會在空的情況下才插入預設建議
+    """
+    def __init__(self, db_path: str, meal_tracker: Optional[Any] = None):
+        """
+        db_path: sqlite DB path（與 MealTracker 共用同一 DB 最佳）
+        meal_tracker: 可選的 MealTracker 實例（若傳入，會用它來取得今日攝入）
+        """
         self.db_path = db_path
+        self.meal_tracker = meal_tracker
         self._initialize_tables()
 
-    def _initialize_tables(self):
-        """初始化必要的資料表"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # 創建推薦攝入量表（如果不存在）
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS recommended_intake (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sex TEXT NOT NULL,
-                age_min INTEGER NOT NULL,
-                age_max INTEGER NOT NULL,
-                weight_min REAL NOT NULL,
-                weight_max REAL NOT NULL,
-                activity_level TEXT NOT NULL,
-                goal TEXT NOT NULL,
-                daily_calories REAL NOT NULL,
-                protein_g REAL NOT NULL,
-                carbohydrates_g REAL NOT NULL,
-                fats_g REAL NOT NULL,
-                fiber_g REAL NOT NULL
-            )
-        ''')
-        
-        # 插入默認推薦數據
-        default_recommendations = [
-            # 減重目標
-            ('M', 20, 30, 60, 80, 'moderately active', 'weight_loss', 2200, 110, 250, 73, 30),
-            ('F', 20, 30, 50, 65, 'moderately active', 'weight_loss', 1800, 90, 200, 60, 25),
-            # 增肌目標
-            ('M', 20, 30, 60, 80, 'moderately active', 'muscle_gain', 2800, 140, 350, 93, 35),
-            ('F', 20, 30, 50, 65, 'moderately active', 'muscle_gain', 2300, 115, 290, 77, 30),
-            # 維持目標
-            ('M', 20, 30, 60, 80, 'moderately active', 'maintain', 2500, 125, 313, 83, 30),
-            ('F', 20, 30, 50, 65, 'moderately active', 'maintain', 2000, 100, 250, 67, 25),
-        ]
-        
-        cursor.executemany('''
-            INSERT OR IGNORE INTO recommended_intake 
-            (sex, age_min, age_max, weight_min, weight_max, activity_level, goal, 
-             daily_calories, protein_g, carbohydrates_g, fats_g, fiber_g)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', default_recommendations)
-        
-        conn.commit()
-        conn.close()
+    # -----------------------
+    # DB helpers
+    # -----------------------
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
 
-    def calculate_user_needs(self, user_data: Dict) -> Dict:
+    def _initialize_tables(self) -> None:
+        """建立 recommended_intake 表（若不存在），且只在表為空時插入預設資料。"""
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS recommended_intake (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sex TEXT NOT NULL,
+                    age_min INTEGER NOT NULL,
+                    age_max INTEGER NOT NULL,
+                    weight_min REAL NOT NULL,
+                    weight_max REAL NOT NULL,
+                    activity_level TEXT NOT NULL,
+                    goal TEXT NOT NULL,
+                    daily_calories REAL NOT NULL,
+                    protein_g REAL NOT NULL,
+                    carbohydrates_g REAL NOT NULL,
+                    fats_g REAL NOT NULL,
+                    fiber_g REAL NOT NULL,
+                    UNIQUE(sex, age_min, age_max, weight_min, weight_max, activity_level, goal)
+                )
+            ''')
+            # 只在表為空時插入預設值，避免重複
+            cur.execute('SELECT COUNT(1) as cnt FROM recommended_intake')
+            cnt = cur.fetchone()['cnt']
+            if cnt == 0:
+                default_recommendations = [
+                    # sample defaults (可依需求擴充)
+                    ('M', 20, 30, 60, 80, 'moderately_active', 'weight_loss', 2200, 110, 250, 73, 30),
+                    ('F', 20, 30, 50, 65, 'moderately_active', 'weight_loss', 1800, 90, 200, 60, 25),
+                    ('M', 20, 30, 60, 80, 'moderately_active', 'muscle_gain', 2800, 140, 350, 93, 35),
+                    ('F', 20, 30, 50, 65, 'moderately_active', 'muscle_gain', 2300, 115, 290, 77, 30),
+                    ('M', 20, 30, 60, 80, 'moderately_active', 'maintain', 2500, 125, 313, 83, 30),
+                    ('F', 20, 30, 50, 65, 'moderately_active', 'maintain', 2000, 100, 250, 67, 25),
+                ]
+                cur.executemany('''
+                    INSERT OR IGNORE INTO recommended_intake
+                    (sex, age_min, age_max, weight_min, weight_max, activity_level, goal, daily_calories, protein_g, carbohydrates_g, fats_g, fiber_g)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', default_recommendations)
+            conn.commit()
+
+    # -----------------------
+    # Core nutrition math
+    # -----------------------
+    def calculate_user_needs(self, user_data: Dict[str, Any]) -> Dict[str, float]:
         """
-        計算用戶的營養需求
-        
-        Args:
-            user_data: 包含用戶資訊的字典
-                {
-                    'sex': 'M'/'F',
-                    'age': 年齡,
-                    'weight': 體重(kg),
-                    'height': 身高(cm),
-                    'activity_level': 'sedentary'/'lightly_active'/'moderately_active'/'very_active',
-                    'goal': 'weight_loss'/'muscle_gain'/'maintain'
-                }
-        
-        Returns:
-            Dict: 包含計算後的營養需求
+        計算用戶需求（BMR + TDEE + 目標調整）
+        user_data: {sex, age, weight(kg), height(cm), activity_level, goal}
+        返回: {daily_calories, protein_g, carbohydrates_g, fats_g, fiber_g, tdee, bmr}
         """
-        # 計算BMR（基礎代謝率）
-        if user_data['sex'] == 'M':
-            bmr = 10 * user_data['weight'] + 6.25 * user_data['height'] - 5 * user_data['age'] + 5
+        sex = user_data.get('sex', 'M')
+        age = user_data.get('age', 30)
+        weight = user_data.get('weight', 70)
+        height = user_data.get('height', 170)
+        activity_level = user_data.get('activity_level', 'moderately_active')
+        goal = user_data.get('goal', 'maintain')
+
+        # Mifflin-St Jeor
+        if sex == 'M':
+            bmr = 10 * weight + 6.25 * height - 5 * age + 5
         else:
-            bmr = 10 * user_data['weight'] + 6.25 * user_data['height'] - 5 * user_data['age'] - 161
-        
-        # 活動水平乘數
-        activity_multipliers = {
+            bmr = 10 * weight + 6.25 * height - 5 * age - 161
+
+        multipliers = {
             'sedentary': 1.2,
             'lightly_active': 1.375,
             'moderately_active': 1.55,
             'very_active': 1.725,
             'extremely_active': 1.9
         }
-        
-        activity_level = user_data.get('activity_level', 'moderately_active')
-        tdee = bmr * activity_multipliers.get(activity_level, 1.55)
-        
-        # 根據目標調整熱量需求
-        goal_adjustments = {
-            'weight_loss': 0.85,  # 減少15%熱量
-            'maintain': 1.0,      # 維持熱量
-            'muscle_gain': 1.15   # 增加15%熱量
+        tdee = bmr * multipliers.get(activity_level, 1.55)
+
+        adjustments = {
+            'weight_loss': 0.85,
+            'maintain': 1.0,
+            'muscle_gain': 1.15
         }
-        
-        goal = user_data.get('goal', 'maintain')
-        adjusted_calories = tdee * goal_adjustments.get(goal, 1.0)
-        
-        # 計算巨量營養素需求（基於熱量分配）
-        # 蛋白質: 25%, 碳水: 50%, 脂肪: 25%
-        protein_calories = adjusted_calories * 0.25
-        carb_calories = adjusted_calories * 0.50
-        fat_calories = adjusted_calories * 0.25
-        
-        # 轉換為克數（蛋白質和碳水: 4卡/克, 脂肪: 9卡/克）
-        protein_g = protein_calories / 4
-        carbs_g = carb_calories / 4
-        fats_g = fat_calories / 9
-        
+        daily_cal = tdee * adjustments.get(goal, 1.0)
+
+        # macro split (更靈活：可以依 goal 調整)
+        if goal == 'weight_loss':
+            prot_pct, carb_pct, fat_pct = 0.30, 0.40, 0.30
+        elif goal == 'muscle_gain':
+            prot_pct, carb_pct, fat_pct = 0.30, 0.50, 0.20
+        else:
+            prot_pct, carb_pct, fat_pct = 0.25, 0.50, 0.25
+
+        protein_g = (daily_cal * prot_pct) / 4.0
+        carbs_g = (daily_cal * carb_pct) / 4.0
+        fats_g = (daily_cal * fat_pct) / 9.0
+
         return {
-            'daily_calories': round(adjusted_calories),
+            'daily_calories': round(daily_cal, 1),
             'protein_g': round(protein_g, 1),
             'carbohydrates_g': round(carbs_g, 1),
             'fats_g': round(fats_g, 1),
-            'fiber_g': 25,  # 默認纖維攝入量
-            'tdee': round(tdee),
-            'bmr': round(bmr)
+            'fiber_g': user_data.get('fiber_g', 25),
+            'tdee': round(tdee, 1),
+            'bmr': round(bmr, 1)
         }
 
-    def get_meal_recommendations(self, user_data: Dict, meal_type: str = "lunch", 
-                               max_recommendations: int = 5) -> List[Dict]:
+    # -----------------------
+    # Recommendation logic
+    # -----------------------
+    def get_meal_recommendations(self,
+                                 user_data: Dict[str, Any],
+                                 meal_type: str = "lunch",
+                                 max_recommendations: int = 6,
+                                 preferences: Optional[List[str]] = None,
+                                 exclude_types: Optional[List[str]] = None
+                                 ) -> List[Dict[str, Any]]:
         """
-        獲取個性化餐食推薦
-        
-        Args:
-            user_data: 用戶數據
-            meal_type: 餐食類型 (breakfast, lunch, dinner, snack)
-            max_recommendations: 最大推薦數量
-        
-        Returns:
-            List[Dict]: 推薦餐食列表
+        取得推薦食物清單
+        user_data 必須包含 user_id （若你想讓系統使用 MealTracker 取得今日攝入）
+        meal_type: breakfast/lunch/dinner/snack
+        preferences: list of preferred food_type, e.g. ['protein', 'vegetable']
+        exclude_types: list of food_type to避免
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            
-            # 計算用戶營養需求
-            user_needs = self.calculate_user_needs(user_data)
-            
-            # 獲取用戶今日已攝入營養
-            today_intake = self._get_today_intake(conn, user_data.get('user_id', 1))
-            
-            # 計算剩餘營養需求
-            remaining_needs = self._calculate_remaining_needs(user_needs, today_intake, meal_type)
-            
-            # 獲取食物數據
-            food_data = pd.read_sql_query("SELECT * FROM food_nutrition", conn)
-            
-            # 根據餐食類型過濾食物
+            # 1) compute needs
+            needs = self.calculate_user_needs(user_data)
+
+            # 2) obtain today's intake (use meal_tracker if available)
+            uid = user_data.get('user_id')
+            if self.meal_tracker and uid is not None:
+                today_intake = self.meal_tracker.get_today_intake(uid)
+            else:
+                # fallback: zeroed
+                today_intake = {'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0}
+
+            # 3) remaining needs for this meal (allocation)
+            allocations = {'breakfast': 0.25, 'lunch': 0.35, 'dinner': 0.30, 'snack': 0.10}
+            alloc = allocations.get(meal_type, 0.3)
+            remaining = {
+                'calories': max(0.0, needs['daily_calories'] * alloc - today_intake.get('calories', 0.0)),
+                'protein': max(0.0, needs['protein_g'] * alloc - today_intake.get('protein', 0.0)),
+                'carbs': max(0.0, needs['carbohydrates_g'] * alloc - today_intake.get('carbs', 0.0)),
+                'fats': max(0.0, needs['fats_g'] * alloc - today_intake.get('fats', 0.0))
+            }
+
+            # if remaining calories are near zero, return empty list
+            if remaining['calories'] < 5:
+                return []
+
+            # 4) fetch candidate foods from DB and filter by meal_type semantics
             meal_filters = {
                 'breakfast': ['grain', 'fruit', 'dairy'],
                 'lunch': ['protein', 'vegetable', 'grain'],
                 'dinner': ['protein', 'vegetable', 'grain'],
                 'snack': ['fruit', 'nuts', 'dairy']
             }
-            
-            filtered_foods = food_data[food_data['food_type'].isin(meal_filters.get(meal_type, []))]
-            
-            # 為食物評分
-            scored_foods = []
-            for _, food in filtered_foods.iterrows():
-                score = self._score_food(food, remaining_needs, user_data)
-                scored_foods.append((food, score))
-            
-            # 按分數排序並選擇最佳推薦
-            scored_foods.sort(key=lambda x: x[1], reverse=True)
-            recommendations = []
-            
-            for food, score in scored_foods[:max_recommendations]:
-                food_dict = {
-                    'food_id': food['food_id'],
-                    'food_name': food['food_name'],
-                    'food_type': food['food_type'],
-                    'calories': food['calories'],
-                    'protein': food['protein'],
-                    'carbohydrates': food['carbohydrates'],
-                    'fats': food['fats'],
-                    'vitamins': food['vitamins'],
-                    'minerals': food['minerals'],
-                    'score': round(score, 2),
-                    'recommended_quantity': self._calculate_recommended_quantity(food, remaining_needs)
+            allowed_types = meal_filters.get(meal_type, None)
+
+            with self._connect() as conn:
+                cur = conn.cursor()
+                if allowed_types:
+                    q = f"SELECT * FROM food_nutrition WHERE food_type IN ({','.join('?' for _ in allowed_types)})"
+                    cur.execute(q, allowed_types)
+                else:
+                    cur.execute("SELECT * FROM food_nutrition")
+                rows = cur.fetchall()
+
+            candidates = [dict(r) for r in rows]
+
+            # apply excludes
+            if exclude_types:
+                candidates = [c for c in candidates if c.get('food_type') not in set(exclude_types)]
+
+            # 5) score each candidate
+            scored = []
+            for food in candidates:
+                # per 100g nutrition
+                cal100 = float(food.get('calories') or 0.0)
+                prot100 = float(food.get('protein') or 0.0)
+                carb100 = float(food.get('carbohydrates') or 0.0)
+                fat100 = float(food.get('fats') or 0.0)
+
+                # if food has zero calories and no macros, skip
+                if cal100 <= 0 and prot100 <= 0 and carb100 <= 0 and fat100 <= 0:
+                    continue
+
+                # estimate recommended grams to satisfy remaining calories
+                rec_qty = self._calculate_recommended_quantity_from_remaining(cal100, remaining['calories'])
+
+                # nutrition that rec_qty provides
+                factor = rec_qty / 100.0
+                provide = {
+                    'calories': cal100 * factor,
+                    'protein': prot100 * factor,
+                    'carbs': carb100 * factor,
+                    'fats': fat100 * factor
                 }
-                recommendations.append(food_dict)
-            
-            conn.close()
-            return recommendations
-            
-        except Exception as e:
-            print(f"獲取餐食推薦時發生錯誤: {e}")
+
+                # score components (all normalized to 0..1)
+                nutrition_score = self._nutrition_match_score(provide, remaining)
+                goal_score = self._goal_alignment_score(food, needs, provide, user_data)
+                preference_score = self._preference_score(food, user_data, preferences)
+                diversity_score = 0.7  # placeholder; could use history to compute diversity
+
+                total_score = (nutrition_score * 0.35 +
+                               goal_score * 0.35 +
+                               preference_score * 0.20 +
+                               diversity_score * 0.10)
+
+                scored.append({
+                    'food_id': food.get('food_id'),
+                    'food_name': food.get('food_name'),
+                    'food_type': food.get('food_type'),
+                    'per_100g': {'calories': cal100, 'protein': prot100, 'carbs': carb100, 'fats': fat100},
+                    'recommended_quantity_g': rec_qty,
+                    'provide': provide,
+                    'score': round(total_score, 4),
+                    'nutrition_score': round(nutrition_score, 4),
+                    'goal_score': round(goal_score, 4),
+                    'preference_score': round(preference_score, 4)
+                })
+
+            # sort and return top-N
+            scored.sort(key=lambda x: x['score'], reverse=True)
+            return scored[:max_recommendations]
+
+        except Exception as ex:
+            print(f"get_meal_recommendations error: {ex}")
             return []
 
-    def _get_today_intake(self, conn: sqlite3.Connection, user_id: int) -> Dict:
-        """獲取用戶今日已攝入營養"""
-        try:
-            query = '''
-                SELECT 
-                    SUM(calories_consumed) as total_calories,
-                    SUM(protein_consumed) as total_protein,
-                    SUM(carbs_consumed) as total_carbs,
-                    SUM(fats_consumed) as total_fats
-                FROM user_history
-                WHERE user_id = ? AND date = date('now')
-            '''
-            result = pd.read_sql_query(query, conn, params=(user_id,)).iloc[0]
-            
-            return {
-                'calories': result['total_calories'] or 0,
-                'protein': result['total_protein'] or 0,
-                'carbs': result['total_carbs'] or 0,
-                'fats': result['total_fats'] or 0
-            }
-        except:
-            return {'calories': 0, 'protein': 0, 'carbs': 0, 'fats': 0}
-
-    def _calculate_remaining_needs(self, user_needs: Dict, today_intake: Dict, meal_type: str) -> Dict:
-        """計算剩餘營養需求"""
-        # 根據餐食類型分配每日需求的百分比
-        meal_allocations = {
-            'breakfast': 0.25,
-            'lunch': 0.35,
-            'dinner': 0.30,
-            'snack': 0.10
-        }
-        
-        allocation = meal_allocations.get(meal_type, 0.25)
-        
-        remaining = {
-            'calories': max(0, user_needs['daily_calories'] * allocation - today_intake['calories']),
-            'protein': max(0, user_needs['protein_g'] * allocation - today_intake['protein']),
-            'carbs': max(0, user_needs['carbohydrates_g'] * allocation - today_intake['carbs']),
-            'fats': max(0, user_needs['fats_g'] * allocation - today_intake['fats'])
-        }
-        
-        return remaining
-
-    def _score_food(self, food: pd.Series, remaining_needs: Dict, user_data: Dict) -> float:
-        """為食物評分（基於論文中的4個指標）"""
-        score = 0.0
-        
-        # 1. 營養均衡 (30%) - 檢查是否符合剩餘需求的比例
-        nutrition_score = self._calculate_nutrition_balance(food, remaining_needs)
-        score += nutrition_score * 0.3
-        
-        # 2. 幫助達成目標 (35%) - 基於用戶目標評分
-        goal_score = self._calculate_goal_alignment(food, user_data)
-        score += goal_score * 0.35
-        
-        # 3. 符合用戶偏好 (25%) - 這裡簡化處理，實際應該基於用戶歷史數據
-        preference_score = self._calculate_preference_score(food, user_data)
-        score += preference_score * 0.25
-        
-        # 4. 多樣性 (10%) - 需要用戶歷史數據，這裡簡化
-        diversity_score = 0.7  # 默認分數
-        score += diversity_score * 0.1
-        
-        return score
-
-    def _calculate_nutrition_balance(self, food: pd.Series, remaining_needs: Dict) -> float:
-        """計算營養平衡分數"""
-        if remaining_needs['calories'] <= 0:
-            return 0.0
-        
-        # 計算食物營養與剩餘需求的比例匹配度
-        calorie_ratio = min(food['calories'] / remaining_needs['calories'], 1.0) if remaining_needs['calories'] > 0 else 0
-        protein_ratio = min(food['protein'] / remaining_needs['protein'], 1.0) if remaining_needs['protein'] > 0 else 0
-        carbs_ratio = min(food['carbohydrates'] / remaining_needs['carbs'], 1.0) if remaining_needs['carbs'] > 0 else 0
-        fats_ratio = min(food['fats'] / remaining_needs['fats'], 1.0) if remaining_needs['fats'] > 0 else 0
-        
-        # 計算平均匹配度
-        avg_ratio = (calorie_ratio + protein_ratio + carbs_ratio + fats_ratio) / 4
-        
-        return avg_ratio
-
-    def _calculate_goal_alignment(self, food: pd.Series, user_data: Dict) -> float:
-        """計算與用戶目標的對齊程度"""
-        goal = user_data.get('goal', 'maintain')
-        
-        if goal == 'weight_loss':
-            # 減重：偏好低熱量、高蛋白、高纖維食物
-            score = (food['protein'] * 2 - food['calories'] * 0.1 - food['fats'] * 0.5) / 10
-        elif goal == 'muscle_gain':
-            # 增肌：偏好高蛋白、適中碳水食物
-            score = (food['protein'] * 3 + food['carbohydrates'] * 0.5 - food['fats'] * 0.2) / 10
-        else:  # maintain
-            # 維持：均衡營養
-            score = (food['protein'] + food['carbohydrates'] * 0.8 + food['fats'] * 0.5) / 10
-        
-        return max(0, min(1, score))
-
-    def _calculate_preference_score(self, food: pd.Series, user_data: Dict) -> float:
-        """計算偏好分數（簡化版本）"""
-        # 這裡應該基於用戶歷史數據分析偏好
-        # 目前使用食物類型的基本偏好
-        type_preferences = {
-            'fruit': 0.8,
-            'vegetable': 0.7,
-            'protein': 0.9,
-            'grain': 0.8,
-            'nuts': 0.6,
-            'dairy': 0.7
-        }
-        
-        return type_preferences.get(food['food_type'], 0.5)
-
-    def _calculate_recommended_quantity(self, food: pd.Series, remaining_needs: Dict) -> int:
-        """計算推薦食用量（克）"""
-        if food['calories'] <= 0:
-            return 100
-        
-        # 基於熱量需求計算推薦量
-        base_quantity = (remaining_needs['calories'] / food['calories']) * 100
-        recommended = min(max(50, base_quantity), 300)  # 限制在50-300克之間
-        
-        return round(recommended / 10) * 10  # 四捨五入到最近的10克
-
-    def rate_meal(self, meal_data: Dict, user_needs: Dict) -> Dict:
+    # -----------------------
+    # Scoring helpers
+    # -----------------------
+    @staticmethod
+    def _calculate_recommended_quantity_from_remaining(cal_per_100g: float, remaining_calories: float) -> int:
         """
-        評分單一餐食
-        
-        Args:
-            meal_data: 餐食數據
-            user_needs: 用戶營養需求
-        
-        Returns:
-            Dict: 評分結果
+        基於 remaining_calories 決定推薦攝取量（g）。
+        - 若 cal_per_100g == 0，回傳 100g 的保守值
+        - 限制於 30 - 500g，四捨五入到 5g
         """
-        try:
-            total_score = 0
-            feedback = []
-            
-            # 檢查熱量
-            calorie_ratio = meal_data['calories'] / user_needs['daily_calories']
-            if calorie_ratio <= 0.25:
-                total_score += 25
-                feedback.append("熱量控制良好")
-            elif calorie_ratio <= 0.35:
-                total_score += 20
-                feedback.append("熱量適中")
-            else:
-                total_score += 10
-                feedback.append("熱量稍高")
-            
-            # 檢查蛋白質
-            protein_ratio = meal_data['protein'] / user_needs['protein_g']
-            if protein_ratio >= 0.2:
-                total_score += 25
-                feedback.append("蛋白質充足")
-            else:
-                total_score += 10
-                feedback.append("建議增加蛋白質")
-            
-            # 檢查營養平衡
-            balance_score = self._calculate_meal_balance(meal_data)
-            total_score += balance_score * 50
-            
-            # 總體評價
-            if total_score >= 80:
-                rating = "優秀"
-            elif total_score >= 60:
-                rating = "良好"
-            elif total_score >= 40:
-                rating = "一般"
-            else:
-                rating = "需改進"
-            
-            return {
-                'total_score': total_score,
-                'rating': rating,
-                'feedback': feedback,
-                'calorie_evaluation': self._evaluate_calorie_level(meal_data['calories'])
-            }
-            
-        except Exception as e:
-            print(f"評分餐食時發生錯誤: {e}")
-            return {'total_score': 0, 'rating': '無法評分', 'feedback': [], 'calorie_evaluation': '未知'}
-
-    def _calculate_meal_balance(self, meal_data: Dict) -> float:
-        """計算餐食營養平衡分數"""
-        total = meal_data['protein'] + meal_data['carbs'] + meal_data['fats']
-        if total == 0:
-            return 0.0
-        
-        # 理想比例：蛋白質25%, 碳水50%, 脂肪25%
-        ideal_ratios = [0.25, 0.50, 0.25]
-        actual_ratios = [
-            meal_data['protein'] / total,
-            meal_data['carbs'] / total,
-            meal_data['fats'] / total
-        ]
-        
-        # 計算與理想比例的差異
-        balance_score = 1 - sum(abs(actual - ideal) for actual, ideal in zip(actual_ratios, ideal_ratios)) / 2
-        return max(0, balance_score)
-
-    def _evaluate_calorie_level(self, calories: float) -> str:
-        """評估熱量水平"""
-        if calories < 300:
-            return "低熱量"
-        elif calories < 600:
-            return "中等熱量"
-        elif calories < 900:
-            return "高熱量"
+        if cal_per_100g <= 0:
+            base = 100.0
         else:
-            return "極高熱量"
+            base = (remaining_calories / cal_per_100g) * 100.0
 
-    def generate_weekly_report(self, user_id: int) -> Dict:
-        """生成每週營養報告"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            
-            # 獲取最近7天的數據
-            query = '''
-                SELECT 
-                    date,
-                    SUM(calories_consumed) as daily_calories,
-                    SUM(protein_consumed) as daily_protein,
-                    SUM(carbs_consumed) as daily_carbs,
-                    SUM(fats_consumed) as daily_fats
-                FROM user_history
-                WHERE user_id = ? AND date >= date('now', '-7 days')
-                GROUP BY date
-                ORDER BY date
-            '''
-            
-            weekly_data = pd.read_sql_query(query, conn, params=(user_id,))
-            
-            # 計算平均值和趨勢
-            avg_calories = weekly_data['daily_calories'].mean() if not weekly_data.empty else 0
-            avg_protein = weekly_data['daily_protein'].mean() if not weekly_data.empty else 0
-            
-            conn.close()
-            
-            return {
-                'period': '7天',
-                'average_calories': round(avg_calories),
-                'average_protein': round(avg_protein, 1),
-                'data_points': len(weekly_data),
-                'trend': 'stable'  # 簡化，實際應該計算趨勢
-            }
-            
-        except Exception as e:
-            print(f"生成週報時發生錯誤: {e}")
-            return {}
+        # clamp and round to nearest 5g
+        base = max(30.0, min(500.0, base))
+        return int(round(base / 5.0) * 5)
 
-    def close(self):
-        """關閉資料庫連接"""
-        pass  # 使用完畢後手動關閉連接
+    @staticmethod
+    def _nutrition_match_score(provide: Dict[str, float], remaining: Dict[str, float]) -> float:
+        """
+        計算營養匹配度：對每個 macro 計算 min(provide / remaining, 1)，再取加權平均。
+        若 remaining 為 0，對應項視為 1（因為不需要該 macro）。
+        回傳 0..1。
+        """
+        weights = {'calories': 0.4, 'protein': 0.3, 'carbs': 0.2, 'fats': 0.1}
+        s = 0.0
+        for k, w in weights.items():
+            rem = remaining.get(k, 0.0)
+            prov = provide.get(k, 0.0)
+            if rem <= 0:
+                ratio = 1.0
+            else:
+                ratio = min(prov / rem, 1.0)
+            s += ratio * w
+        return max(0.0, min(1.0, s))
+
+    @staticmethod
+    def _goal_alignment_score(food: Dict[str, Any], needs: Dict[str, float], provide: Dict[str, float], user_data: Dict[str, Any]) -> float:
+        """
+        根據用戶目標 (weight_loss/muscle_gain/maintain) 評估食物的對齊度。
+        使用 protein-per-calorie 與 fiber/low-fat 特性來偏好減重或增肌。
+        統一 normalize 到 0..1。
+        """
+        goal = user_data.get('goal', 'maintain')
+        # avoid division by zero
+        prov_cal = max(1e-6, provide.get('calories', 0.0))
+        prot_per_100cal = (provide.get('protein', 0.0) / prov_cal) * 100.0  # g protein per 100 kcal
+
+        # heuristics (可調)
+        if goal == 'weight_loss':
+            # prefer higher protein density and lower fat density
+            prot_score = min(prot_per_100cal / 8.0, 1.0)  # ~8g/100kcal is very protein-dense
+            fat_score = 1.0 - min((provide.get('fats', 0.0) / prov_cal) * 100.0 / 10.0, 1.0)
+            return max(0.0, min(1.0, 0.7 * prot_score + 0.3 * fat_score))
+        elif goal == 'muscle_gain':
+            # prefer high protein and sufficient calories
+            prot_score = min(prot_per_100cal / 10.0, 1.0)  # stricter
+            cal_score = min(provide.get('calories', 0.0) / (needs['daily_calories'] * 0.2 + 1e-6), 1.0)
+            return max(0.0, min(1.0, 0.6 * prot_score + 0.4 * cal_score))
+        else:
+            # maintain: prefer balanced
+            # closeness to macro ratio (protein:carb:fat) as fraction of needs
+            def ratio_score(key):
+                need = {'protein': needs['protein_g'], 'carbs': needs['carbohydrates_g'], 'fats': needs['fats_g']}[key]
+                if need <= 0:
+                    return 1.0
+                return min(provide.get(key, 0.0) / (need * 0.25 + 1e-6), 1.0)  # compare to meal allocation ~25%
+            p = ratio_score('protein'); c = ratio_score('carbs'); f = ratio_score('fats')
+            return (p + c + f) / 3.0
+
+    @staticmethod
+    def _preference_score(food: Dict[str, Any], user_data: Dict[str, Any], preferences: Optional[List[str]] = None) -> float:
+        """
+        若使用者提供 preferences（food_type 清單），則給予偏好加分；若沒有，使用簡單預設權重。
+        回傳 0..1。
+        """
+        # explicit preferences override
+        if preferences:
+            return 1.0 if food.get('food_type') in set(preferences) else 0.4
+
+        # fallback defaults
+        type_pref = {
+            'protein': 1.0,
+            'vegetable': 0.9,
+            'fruit': 0.8,
+            'grain': 0.8,
+            'dairy': 0.7,
+            'nuts': 0.7
+        }
+        return float(type_pref.get(food.get('food_type'), 0.5))
+
+
+# -----------------------
+# Example usage
+# -----------------------
+if __name__ == "__main__":
+    # 範例假設：已有 MealTracker，並同一個 DB file
+    from meal_tracker import MealTracker  # 請確保 meal_tracker.py 可 import
+    mt = MealTracker("test_mealtracker.db")
+    rs = RecommendationService("test_mealtracker.db", meal_tracker=mt)
+
+    user = {
+        'user_id': 1,
+        'sex': 'F',
+        'age': 28,
+        'weight': 58,
+        'height': 162,
+        'activity_level': 'moderately_active',
+        'goal': 'muscle_gain'
+    }
+
+    recs = rs.get_meal_recommendations(user, meal_type='lunch', max_recommendations=5, preferences=['protein'])
+    import pprint; pprint.pprint(recs)
