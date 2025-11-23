@@ -73,7 +73,6 @@ class Meal:
         print(f"Meal logged for user {user_id} at {self.time}.")
         conn_user_gt.commit()
         conn_user_gt.close()
-    
 
     def print_meal(self):
         for food_item, quantity in self.food_items_quantity.items():

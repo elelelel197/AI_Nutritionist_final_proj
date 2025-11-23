@@ -18,7 +18,7 @@ class User:
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             SELECT height, weight, sex, age, estimated_time, target_weight FROM users
-            WHERE id = ?
+            WHERE user_id = ?
             ''', (user_id,)
             )
         user_data = cursor_user_history.fetchone()
@@ -37,7 +37,27 @@ class User:
             estimated_time=user_data[4],
             target_weight=user_data[5]
             )
-       
+    
+
+    # Log the user into the user_history database
+    def log_user_to_db(self, time):
+        conn_user_history = sql.connect('user_history.db')
+        cursor_user_history = conn_user_history.cursor()
+        cursor_user_history.execute('''
+            INSERT INTO users (user_id, height, weight, sex, age, estimated_time, target_weight)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (self.id, self.height, self.weight, self.sex, self.age, self.estimated_time, self.target_weight)
+            )
+        cursor_user_history.execute('''
+            INSERT INTO weight_log (user_id, weight, log_time)
+            VALUES (?, ?, ?)
+            ''', (self.id, self.weight, time)
+            )
+        print(f"User {self.id} logged to database.")
+        conn_user_history.commit()   
+        conn_user_history.close()
+
+
     # Update user attributes        
     def update_weight(self, new_weight, time):
         self.weight = new_weight
@@ -46,11 +66,11 @@ class User:
         cursor_user_history.execute('''
             UPDATE users
             SET weight = ?
-            WHERE id = ?
+            WHERE user_id = ?
             ''', (new_weight, self.id)
             )
         cursor_user_history.execute('''
-            INSERT INTO weight_log (id, weight, log_time)
+            INSERT INTO weight_log (user_id, weight, log_time)
             VALUES (?, ?, ?)
             ''', (self.id, new_weight, time)
             )
@@ -113,20 +133,25 @@ class User:
         return self.id
     
 
-    # Log the user into the user_history database
-    def log_user_to_db(self, time):
+    # delete user from database
+    def delete_user_from_db(self):
         conn_user_history = sql.connect('user_history.db')
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
-            INSERT INTO users (id, height, weight, sex, age, estimated_time, target_weight)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (self.id, self.height, self.weight, self.sex, self.age, self.estimated_time, self.target_weight)
+            DELETE FROM users
+            WHERE user_id = ?
+            ''', (self.id,)
             )
         cursor_user_history.execute('''
-            INSERT INTO weight_log (id, weight, log_time)
-            VALUES (?, ?, ?)
-            ''', (self.id, self.weight, time)
+            DELETE FROM weight_log
+            WHERE user_id = ?
+            ''', (self.id,)
             )
-        print(f"User {self.id} logged to database.")
+        cursor_user_history.execute('''
+            DELETE FROM meals_log
+            WHERE user_id = ?
+            ''', (self.id,)
+            )
+        print(f"User {self.id} deleted from database.")
         conn_user_history.commit()   
         conn_user_history.close()

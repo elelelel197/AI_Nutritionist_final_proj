@@ -8,7 +8,6 @@ CREATE TABLE food_nutrition (
     fats FLOAT NOT NULL,
     vitamins TEXT,
     minerals TEXT,
-    value_in_grams INTEGER DEFAULT 100
 );
 
 INSERT INTO food_nutrition (food_id, food_type, food_name, calories, protein, carbohydrates, fats, vitamins, minerals) VALUES

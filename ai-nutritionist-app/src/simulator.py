@@ -66,7 +66,7 @@ class Simulator:
                 # Every food has a random preference score between 0 and 1
                 # Users have random activity levels
                 cursor_user_gt.execute('''
-                    INSERT INTO users_preference (id, food_types, food_names, food_preferences)
+                    INSERT INTO users_preference (user_id, food_types, food_names, food_preferences)
                     VALUES (?, ?, ?, ?)
                     ''', (new_users[i].id, 
                           food_tp_nm[0], 
@@ -75,7 +75,7 @@ class Simulator:
                           )
                     )
                 cursor_user_gt.execute('''
-                    INSERT INTO users_activity_level (id, activity_level)
+                    INSERT INTO users_activity_level (user_id, activity_level)
                     VALUES (?, ?)
                     ''', (new_users[i].id, 
                           np.random.choice(['sedentary', 'lightly active', 'moderately active', 'very active', 'super active'])
@@ -98,7 +98,7 @@ class Simulator:
         for food in food_items:
             cursor_user_gt.execute('''
                 SELECT food_types, food_preferences FROM users_preference                   
-                WHERE id = ? AND food_names = ?
+                WHERE user_id = ? AND food_names = ?
                 ''', (user.id, food)
                 )
             result = cursor_user_gt.fetchone()
@@ -113,7 +113,7 @@ class Simulator:
                 # Quantity is based on recommended quantity
                 cursor_user_gt.execute('''
                     SELECT food_names FROM users_preference
-                    WHERE id = ? and food_types = ? and food_names != ?
+                    WHERE user_id = ? and food_types = ? and food_names != ?
                     ''', (user.id, food_type, food)
                     )
                 food_type_preferences = cursor_user_gt.fetchall()
@@ -132,8 +132,8 @@ class Simulator:
         conn_user_gt = sql.connect('user_gt.db')
         cursor_user_gt = conn_user_gt.cursor()
         cursor_user_gt.execute('''
-            SELECT * from users_acitivity_level                   
-            WHERE id = ?
+            SELECT * from users_activity_level                   
+            WHERE user_id = ?
             ''', (user.id,)
             )
         user_activity_level = cursor_user_gt.fetchone()[1]
