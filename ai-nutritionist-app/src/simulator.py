@@ -1,11 +1,14 @@
-# Code has not been tested yet
-
+from datetime import date, timedelta
+from unittest import result
 import numpy as np
 import sqlite3 as sql
 import uuid
+import pandas as pd
 from models.user import User
 from models.meal import Meal
 import utils.nutrition_utils
+from services.recommendation_service import RecommendationService
+from algorithms import preference_algo, activity_lv_algo, weight_g_l_algo
 
 ACTIVITY_LEVELS_RANDOM_DISTORTION_RANGE = (0.9, 1.1)
 WEIGHT_MEASUREMENT_NOISE_STDDEV = 0.02  # 2% standard deviation
@@ -30,7 +33,7 @@ class Simulator:
     
 
     # Create multiple users with random attributes also with food preferences, activity levels
-    def generate_user(self, amount=1):
+    def generate_user(self, amount=1) -> list[User] | User:
         # Generate random UUIDs for users
         id_list = self.create_random_id(amount)
 
@@ -50,16 +53,18 @@ class Simulator:
         conn_food_nutrition.close()
 
         # Create users and insert their preferences and activity levels into the user.gt database
-        new_users = [None] * amount
+        new_users = []
         for i in range(amount):
-            new_users[i] = User(
-                id = id_list[i],
-                height = np.random.uniform(self.height_range[0], self.height_range[1]),
-                weight = np.random.uniform(self.weight_range[0], self.weight_range[1]),
-                sex = np.random.choice(self.sex_options),
-                age = np.random.randint(self.age_range[0], self.age_range[1]),
-                estimated_time = np.random.randint(self.estimated_time_range[0], self.estimated_time_range[1]),
-                target_weight = np.random.uniform(self.target_weight_range[0], self.target_weight_range[1])
+            new_users.append(
+                User(
+                    id = id_list[i],
+                    height = np.random.uniform(self.height_range[0], self.height_range[1]),
+                    weight = np.random.uniform(self.weight_range[0], self.weight_range[1]),
+                    sex = np.random.choice(self.sex_options),
+                    age = np.random.randint(self.age_range[0], self.age_range[1]),
+                    estimated_time = np.random.randint(self.estimated_time_range[0], self.estimated_time_range[1]),
+                    target_weight = np.random.uniform(self.target_weight_range[0], self.target_weight_range[1])
+                )
             )
             
             for food_tp_nm in food_type_names:
@@ -93,7 +98,7 @@ class Simulator:
     def simulate_meal_consumption(self, user: User, recommendation: Meal=None):
         conn_user_gt = sql.connect('user_gt.db')
         cursor_user_gt = conn_user_gt.cursor()
-        food_items = recommendation.food_items_quantity.keys()
+        food_items = list(recommendation.food_items_quantity.keys())
         actual_meal = Meal(recommendation.food_items_quantity, recommendation.time)
         for food in food_items:
             cursor_user_gt.execute('''
@@ -101,6 +106,8 @@ class Simulator:
                 WHERE user_id = ? AND food_name = ?
                 ''', (user.id, food)
                 )
+            if result is None:
+                continue
             result = cursor_user_gt.fetchone()
             food_type = result[0]
             food_preference = result[1]
@@ -112,7 +119,7 @@ class Simulator:
                 # prefered food of the same type would more likely be choosen 
                 # Quantity is based on recommended quantity
                 cursor_user_gt.execute('''
-                    SELECT food_name FROM users_preference
+                    SELECT food_name, food_preference FROM users_preference
                     WHERE user_id = ? and food_type = ? and food_name != ?
                     ''', (user.id, food_type, food)
                     )
@@ -136,7 +143,8 @@ class Simulator:
             WHERE user_id = ?
             ''', (user.id,)
             )
-        user_activity_level = cursor_user_gt.fetchone()[1]
+        result = cursor_user_gt.fetchone()
+        user_activity_level = result[1] if result else 'moderately active'
         conn_user_gt.close()
 
         # Users have different activity levels on different days but stays within a range of their average activity level
@@ -145,7 +153,7 @@ class Simulator:
         activity_level_random_distortion = np.mean(daily_distortions)
         if(user_activity_level == 'sedentary' and activity_level_random_distortion < 1):
             activity_level_random_distortion = 1
-        elif(user_activity_level == 'super active' & activity_level_random_distortion > 1):
+        elif(user_activity_level == 'super active' and activity_level_random_distortion > 1):
             activity_level_random_distortion = 1
         daily_caloric_needs = utils.nutrition_utils.calculate_daily_caloric_needs(
             weight=user.weight,
@@ -163,4 +171,35 @@ class Simulator:
         print(f"User {user.id} weight changed from {user.weight:.2f} kg to {new_weight:.2f} kg over {days_passed} days.")
         return new_weight
 
-     
+
+if __name__ == "__main__":
+    simulator = Simulator()
+    # Generate 5 random users
+    users = simulator.generate_user(amount=5)
+    for user in users:
+        print(f"User ID: {user.id}, Height: {user.height:.2f} cm, Weight: {user.weight:.2f} kg")
+    # In 30 days, all users gets recommendation and log meals and record weight
+    for day in range(30):
+        time = date.today() + timedelta(days=day)
+        for user in users:
+            recommended_meal = RecommendationService.get_meal_recommendations(user, time)
+            recommended_meal.log_meal_into_db(user.id, 'recommended')
+            # Simulate meal consumption
+            actual_meal = simulator.simulate_meal_consumption(user, recommended_meal)
+            actual_meal.log_meal_into_db(user.id, 'actual')
+            # Update user preference model with actual meal data
+            food_name_list = pd.Series(list(actual_meal.food_items_quantity.keys())).unique()
+            preference_model = preference_algo.train_or_update_model()
+            for food in food_name_list:
+                preference_score = preference_algo.predict_preference(
+                    preference_model, user.id, food, 0, actual_meal.food_items_quantity[food], food_name_list)
+            # Simulate weight change
+            new_weight = simulator.simulate_weight_change(user, days_passed=1, total_caloric_intake=actual_meal.calculate_total_calories())
+            user.update_weight(new_weight, time)
+            # Update activity level model with new weight data
+            X, y, activity_categories = activity_lv_algo.fetch_activity_data()
+            activity_model = activity_lv_algo.train_or_update_model(X, y)
+            predicted_level = activity_lv_algo.predict_activity_level(activity_model, user, activity_categories)
+            # Update weight gain/loss model with new weight data
+            factors = weight_g_l_algo.update_weight_gain_loss_factor(user)
+            print(f"Day {day+1}, User {user.id}: New Weight: {new_weight:.2f} kg, Activity Level: {predicted_level}, Weight Gain/Loss Factors: {factors}")
