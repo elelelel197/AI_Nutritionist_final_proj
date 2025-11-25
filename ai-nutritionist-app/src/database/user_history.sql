@@ -10,6 +10,13 @@ CREATE TABLE users (
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
+CREATE TABLE recommend_meals_log (
+    user_id TEXT NOT NULL, 
+    food_name TEXT NOT NULL, 
+    quantity FLOAT, 
+    meal_time DATE,
+);
+
 CREATE TABLE meals_log (
     user_id TEXT NOT NULL, 
     food_name TEXT NOT NULL, 

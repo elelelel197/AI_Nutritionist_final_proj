@@ -133,6 +133,59 @@ class User:
         return self.id
     
 
+    def get_user_food_preference(self, food_name):
+        conn_user_gt = sql.connect('user_pred.db')
+        cursor_user_gt = conn_user_gt.cursor()
+        cursor_user_gt.execute('''
+            SELECT food_preferences FROM users_preference
+            WHERE user_id = ? AND food_names = ?
+            ''', (self.id, food_name)
+            )
+        result = cursor_user_gt.fetchone()
+        conn_user_gt.close()
+        return result[0] if result else 0.5  # Default preference if not found
+
+
+    def get_user_food_preference_of_type(self, food_type):
+        conn_user_gt = sql.connect('user_pred.db')
+        cursor_user_gt = conn_user_gt.cursor()
+        cursor_user_gt.execute('''
+            SELECT food_names, food_preferences FROM users_preference
+            WHERE user_id = ? AND food_types = ?
+            ''', (self.id, food_type)
+            )
+        preferences = cursor_user_gt.fetchall()
+        conn_user_gt.close()
+        preference_dict = {item[0]: item[1] for item in preferences}
+        return preference_dict
+
+
+    def get_user_activity_level(self):
+        conn_user_gt = sql.connect('user_pred.db')
+        cursor_user_gt = conn_user_gt.cursor()
+        cursor_user_gt.execute('''
+            SELECT activity_level FROM users_activity_level
+            WHERE user_id = ?
+            ''', (self.id,)
+            )
+        result = cursor_user_gt.fetchone()
+        conn_user_gt.close()
+        return result[0] if result else 'moderately_active'  # Default activity level if not set
+    
+
+    def get_user_weight_gain_loss_factor(self):
+        conn_user_gt = sql.connect('user_pred.db')
+        cursor_user_gt = conn_user_gt.cursor()
+        cursor_user_gt.execute('''
+            SELECT weight_gain_factor, weight_loss_factor FROM user_weight_gain_loss_factor
+            WHERE user_id = ?
+            ''', (self.id,)
+            )
+        result = cursor_user_gt.fetchone()
+        conn_user_gt.close()
+        return (result[0], result[1]) if result else (1.1, 0.9)  # Default factors if not set
+
+
     # delete user from database
     def delete_user_from_db(self):
         conn_user_history = sql.connect('user_history.db')

@@ -41,3 +41,25 @@ def calculate_daily_caloric_needs(weight, height, age, sex, activity_level):
     }
     
     return bmr * activity_multiplier.get(activity_level, 1.2)
+
+def calculate_macronutrient_distribution(daily_calories, current_weight, target_weight):
+    if target_weight < current_weight:
+        # Weight loss
+        protein_pct, carb_pct, fat_pct = 0.30, 0.40, 0.30
+    elif target_weight > current_weight:
+        # Weight gain
+        protein_pct, carb_pct, fat_pct = 0.30, 0.50, 0.20
+    else:
+        # Maintenance
+        protein_pct, carb_pct, fat_pct = 0.25, 0.50, 0.25
+    
+    protein_g = (daily_calories * protein_pct) / 4
+    carbs_g = (daily_calories * carb_pct) / 4
+    fats_g = (daily_calories * fat_pct) / 9
+    
+    return {
+        'daily_calories': round(daily_calories, 1),
+        'protein_g': round(protein_g, 1),
+        'carbohydrates_g': round(carbs_g, 1),
+        'fats_g': round(fats_g, 1),
+    }

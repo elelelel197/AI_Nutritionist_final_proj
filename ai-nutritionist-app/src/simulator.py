@@ -90,7 +90,7 @@ class Simulator:
 
     # Simulate meal logging for a user based on meal recommendations
     # Returns the actual meal consumed by the user
-    def simulate_meal_consumption(self, user: User, recommendation: Meal):
+    def simulate_meal_consumption(self, user: User, recommendation: Meal=None):
         conn_user_gt = sql.connect('user_gt.db')
         cursor_user_gt = conn_user_gt.cursor()
         food_items = recommendation.food_items_quantity.keys()

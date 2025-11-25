@@ -48,7 +48,7 @@ class Meal:
                 ''', (food_item,)
                 )
             result = cursor_food_nutrition.fetchone()
-            result = cursor_food_nutrition.fetchone()
+            
             if result is None:
                 print(f"Nutritional information for '{food_item}' not found in database.")
                 return None
@@ -74,6 +74,67 @@ class Meal:
         conn_user_gt.commit()
         conn_user_gt.close()
 
+
+    def get_food_types(self):
+        conn_food_nutrition = sql.connect('food_nutrition.db')
+        cursor_food_nutrition = conn_food_nutrition.cursor()
+        food_types = []
+        for food_item in self.food_items_quantity.keys():
+            cursor_food_nutrition.execute('''
+                SELECT food_type FROM food_nutrition
+                WHERE food_name = ?
+                ''', (food_item,)
+                )
+            result = cursor_food_nutrition.fetchone()
+            if result:
+                food_types.append(result[0])
+        conn_food_nutrition.close()
+        return food_types
+
+
     def print_meal(self):
         for food_item, quantity in self.food_items_quantity.items():
             print(f"{food_item}: {quantity}g")
+
+
+    # Food table helpers
+    @staticmethod
+    def add_food_item(food_name: str, food_type: str = None,
+                      calories_per_100g: float = 0, protein_per_100g: float = 0,
+                      carbs_per_100g: float = 0, fats_per_100g: float = 0,
+                      vitamins: str = None, minerals: str = None) -> int:
+        """
+        新增食物到 food_nutrition，回傳 food_id
+        values are per 100g
+        """
+        if not food_name:
+            raise ValueError("food_name 必須提供")
+        conn = sql.connect("food_nutrition.db")
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO food_nutrition
+                (food_name, food_type, calories, protein, carbohydrates, fats, vitamins, minerals)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (food_name, food_type, calories_per_100g, protein_per_100g,
+                  carbs_per_100g, fats_per_100g, vitamins, minerals)
+                  )
+        return cur.lastrowid
+
+
+    @staticmethod
+    def get_food_type_by_name(food_name: str) -> Optional[str]:
+        """
+        由 food_name 查詢 food_type
+        """
+        conn = sql.connect("food_nutrition.db")
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT food_type FROM food_nutrition
+            WHERE food_name = ?
+            ''', (food_name,)
+            )
+        result = cur.fetchone()
+        conn.close()
+        if result:
+            return result[0]
+        return None

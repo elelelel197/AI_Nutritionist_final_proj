@@ -1,14 +1,30 @@
 # ai-nutritionist-app/src/main.py
+from models.user import User
+from models.meal import Meal
+from services.auth_service import AuthService
+from services.recommendation_service import RecommendationService
 
 def main():
-    print("Welcome to the AI Nutritionist App!")
-    
-    # User input for personal details
-    height = float(input("Enter your height in cm: "))
-    weight = float(input("Enter your current weight in kg: "))
-    sex = input("Enter your sex (M/F): ").upper()
-    age = int(input("Enter your age in years: "))
-    target_weight = float(input("Enter your target weight in kg: "))
+
+    while True:
+        print("Welcome to the AI Nutritionist App!")
+        print("Press 0 to login")
+        print("Press 1 to sign up")
+
+        user = None
+        command = input()
+        if command:
+            # sign up
+            id = str(input("Enter your desired id"))
+            height = float(input("Enter your height in cm: "))
+            weight = float(input("Enter your current weight in kg: "))
+            sex = input("Enter your sex (M/F): ").upper()
+            age = int(input("Enter your age in years: "))
+            estimated_time = int(input("Enter your time to reach the goal in days: "))
+            target_weight = float(input("Enter your target weight in kg: "))
+            user = AuthService.
+        # User input for personal details
+        
     
     # Initialize user model
     from models.user import User
