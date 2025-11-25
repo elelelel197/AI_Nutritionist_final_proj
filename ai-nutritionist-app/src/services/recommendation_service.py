@@ -9,11 +9,12 @@ from datetime import date,  timedelta
 
 FOOD_NUTRTION_MATCH_SCORE_FACTOR = 0.5 # 食物營養匹配分數因子
 FOOD_VARIETY_PENALTY_FACTOR = 0.1  # 每多吃一次同樣的食物，品種分數降低 0.1
-NUTRITION_MATCH_SCORE_WEIGHT = 0.4
 LOOKBACK_DAYS = 5
-# VARIETY_SCORE_WEIGHT = 0.1
-PREFERENCE_SCORE_WEIGHT = 0.35
-NONREPEAT_SCORE_WEIGHT = 0.25
+
+NUTRITION_MATCH_SCORE_WEIGHT = 0.2
+HEALTHY_SCORE_WEIGHT = 0.35
+PREFERENCE_SCORE_WEIGHT = 0.3
+NONREPEAT_SCORE_WEIGHT = 0.15
 
 MEAL_FRUIT_RATIO = 0.15
 MEAL_PROTEIN_RATIO = 0.15
@@ -33,8 +34,8 @@ class RecommendationService:
     - food_nutrition 資料表應以 per_100g 為單位（見 MealTracker 實作）
     - recommended_intake 表會在空的情況下才插入預設建議
     """
-    def __init__(self, user: User):
-        self.user = user
+    def __init__(self):
+        pass
 
 
     # -----------------------
@@ -54,10 +55,14 @@ class RecommendationService:
             activity_level=user_activity_level
             )
 
-        daily_cal = daily_cal * weight_gain_factor if user.target_weight > self.user.weight else daily_cal * weight_loss_factor
+        daily_cal = daily_cal * weight_gain_factor if user.target_weight > user.weight else daily_cal * weight_loss_factor
+        if user.sex == 'M':
+            daily_cal = max(daily_cal, 1500)  # Minimum
+        else:
+            daily_cal = max(daily_cal, 1200)  # Minimum
         
         # Macronutrient distribution ratios (can be adjusted based on goals)
-        nutrient_ratios = nu_utils.calculate_macronutrient_distribution(daily_cal, self.user.weight, self.user.target_weight)
+        nutrient_ratios = nu_utils.calculate_macronutrient_distribution(daily_cal, user.weight,user.target_weight)
 
         return nutrient_ratios
 
@@ -76,7 +81,7 @@ class RecommendationService:
             'oil': MEAL_OIL_RATIO,
             'dairy': MEAL_DAIRY_RATIO
         }
-        recommend_food_list = []
+        recommend_meal = Meal({}, time)
         conn_food_nutrition = sql.connect('food_nutrition.db')
         cursor_food_nutrition = conn_food_nutrition.cursor()
         user_needs = user.calculate_user_needs()
@@ -95,19 +100,20 @@ class RecommendationService:
             # Food with higher score has higher chance to get selected
             while np.random.rand() > total_score :
                 food_chosen = np.random.choice(food_list)
-                nutrition_match_score = RecommendationService.food_nutrition_match_score(food_chosen, recommended_meal, user_needs)
+                healthy_score = RecommendationService.food_healthy_score(food_chosen, food_type)
+                nutrition_match_score = RecommendationService.food_nutrition_match_score(food_chosen, recommend_meal, user_needs)
                 nonrepeat_score = RecommendationService.food_nonrepeat_score(user, food_chosen)
                 preference_score = RecommendationService.food_preference_score(user, food_chosen)
-                total_score = nutrition_match_score * NUTRITION_MATCH_SCORE_WEIGHT + nonrepeat_score * NONREPEAT_SCORE_WEIGHT + preference_score * PREFERENCE_SCORE_WEIGHT
+                total_score = nutrition_match_score * NUTRITION_MATCH_SCORE_WEIGHT + nonrepeat_score * NONREPEAT_SCORE_WEIGHT + preference_score * PREFERENCE_SCORE_WEIGHT + healthy_score * HEALTHY_SCORE_WEIGHT
                 reselect_count += 1
-            recommend_food_list.append(food_chosen)
             # The the more reselect_count the less ideal the food
             meal_ratio[food_type] += min((np.exp(AVG_FOOD_RESELECT_COUNT - reselect_count) - 1) * MEAL_RATIO_TOLERANCE, MEAL_RATIO_TOLERANCE)
-
-        sum_ratio = sum(meal_ratio.items())
-        meal_ratio = {keys: meal_ratio[keys] / sum_ratio for keys in meal_ratio}
-        recommend_food_quantity = dict(zip(recommend_food_list, meal_ratio.items()))
-        recommend_meal = Meal(recommend_food_quantity, time)
+            if food_nutrient := Meal.get_food_nutrition_by_name(food_chosen) and food_nutrient['calories'] > 0:
+                recommend_meal.food_items_quantity[food_chosen] = user_needs['daily_calories'] * meal_ratio[food_type] / food_nutrient['calories'] * 100  # convert to grams
+            else:
+                recommend_meal.food_items_quantity[food_chosen] = 100.0  # default 100g if nutrition not found
+            
+        conn_food_nutrition.close()
         return recommend_meal
 
 
@@ -119,22 +125,29 @@ class RecommendationService:
     # Scoring helpers
     # -----------------------
     @staticmethod
+    def food_healthy_score(food, food_type) -> float:
+        score = 1.0
+        healthy_nutrition_composition = nu_utils.get_healthy_nutrition_composition(food_type)
+
+        food_nutrition = nu_utils.get_food_nutrition_by_name(food)
+        if not food_nutrition:
+            return 0.5  # Default score if food nutrition not found
+
+        # When the food's nutritional ratio is far from user's need, the score is lower
+        score = sum(food_nutrition * healthy_nutrition_composition) / np.sqrt(sum(np.array(list(food_nutrition.values())) ** 2)) * sum((np.array(list(healthy_nutrition_composition.values())) ** 2))
+        return score
+
+
+    @staticmethod
     def food_nutrition_match_score(food, meal: Meal, user_needs: Dict[str, Any]) -> float:
         score = 1.0
-        provided_nutrition = meal.calculate_nutritional_values()
-        remaining = user_needs.items() - meal.calculate_nutritional_values()
-        conn = sql.connect("food_nutrition.db")
-        cur = conn.cursor()
-        cur.execute('''
-            SELECT calories, protein, carbohydrates, fats FROM food_nutrition
-            WHERE food_name = ?
-            ''', (food,)
-            )
-        food_nutrition = cur.fetchone()
-        conn.close()
+        remaining = list(user_needs.items()) - meal.calculate_nutritional_values()
+        food_nutrition = nu_utils.get_food_nutrition_by_name(food)
+        if not food_nutrition:
+            return 0.5  # Default score if food nutrition not found
         
         # When the food's nutritional ratio is far from user's need, the score is lower
-        score = sum(food_nutrition * remaining) / np.sqrt(sum(food_nutrition ^ 2) * sum(remaining ^ 2))
+        score = sum(food_nutrition * remaining) / np.sqrt(sum(np.array(list(food_nutrition.values())) ** 2)) * sum((np.array(list(remaining.values())) ** 2))
         return score
 
 
@@ -144,8 +157,8 @@ class RecommendationService:
     # def food_variety_score(meal: Meal, food_name: str) -> float:
     #     score = 1.0
     #     food_type_of_food = Meal.get_food_type_by_name(food_name)
-    #     food_types_in_meal = meal.recommended_meal.get_food_types()
-    #     for food_type in food_types_in_meal:
+    #     food_type_in_meal = meal.recommended_meal.get_food_type()
+    #     for food_type in food_type_in_meal:
     #         if food_type_of_food == food_type:
     #             score *= FOOD_NUTRTION_MATCH_SCORE_FACTOR
     #     return score
@@ -166,7 +179,7 @@ class RecommendationService:
         cursor_user_gt = conn_user_gt.cursor()
         cursor_user_gt.execute('''
             SELECT COUNT(*) FROM meals_log
-            WHERE user_id = ? AND food_name = ? AND neal_time > ?
+            WHERE user_id = ? AND food_name = ? AND meal_time > ?
             ''', (user.id, food_name, time - lookback_time)
             )
         result = cursor_user_gt.fetchone()
@@ -214,21 +227,21 @@ class RecommendationService:
 # -----------------------
 # Example usage
 # -----------------------
-if __name__ == "__main__":
-    # 範例假設：已有 MealTracker，並同一個 DB file
-    from meal_tracker import MealTracker  # 請確保 meal_tracker.py 可 import
-    mt = MealTracker("test_mealtracker.db")
-    rs = RecommendationService("test_mealtracker.db", meal_tracker=mt)
+# if __name__ == "__main__":
+#     # 範例假設：已有 MealTracker，並同一個 DB file
+#     from meal_tracker import MealTracker  # 請確保 meal_tracker.py 可 import
+#     mt = MealTracker("test_mealtracker.db")
+#     rs = RecommendationService("test_mealtracker.db", meal_tracker=mt)
 
-    user = {
-        'user_id': 1,
-        'sex': 'F',
-        'age': 28,
-        'weight': 58,
-        'height': 162,
-        'activity_level': 'moderately_active',
-        'goal': 'muscle_gain'
-    }
+#     user = {
+#         'user_id': 1,
+#         'sex': 'F',
+#         'age': 28,
+#         'weight': 58,
+#         'height': 162,
+#         'activity_level': 'moderately_active',
+#         'goal': 'muscle_gain'
+#     }
 
-    recs = rs.get_meal_recommendations(user, meal_type='lunch', max_recommendations=5, preferences=['protein'])
-    import pprint; pprint.pprint(recs)
+#     recs = rs.get_meal_recommendations(user, meal_type='lunch', max_recommendations=5, preferences=['protein'])
+#     import pprint; pprint.pprint(recs)

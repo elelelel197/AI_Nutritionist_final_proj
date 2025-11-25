@@ -61,24 +61,31 @@ class Meal:
 
 
     # Insert the meal into the user_history database
-    def log_meal_into_db(self, user_id):
+    def log_meal_into_db(self, user_id, recommend_or_actual='actual'):
         conn_user_gt = sql.connect('user_history.db')
         cursor_user_gt = conn_user_gt.cursor()
         for food_item, quantity in self.food_items_quantity.items():
-            cursor_user_gt.execute('''
-                INSERT INTO meals_log (user_id, food_name, quantity, meal_time)
-                VALUES (?, ?, ?, ?)
-                ''', (user_id, food_item, quantity, self.time)
-                )
+            if (recommend_or_actual == 'recommended'):
+                cursor_user_gt.execute('''
+                    INSERT INTO recommended_meals_log (user_id, food_name, quantity, meal_time)
+                    VALUES (?, ?, ?, ?)
+                    ''', (user_id, food_item, quantity, self.time)
+                    )
+            else:
+                cursor_user_gt.execute('''
+                    INSERT INTO meals_log (user_id, food_name, quantity, meal_time)
+                    VALUES (?, ?, ?, ?)
+                    ''', (user_id, food_item, quantity, self.time)
+                    )
         print(f"Meal logged for user {user_id} at {self.time}.")
         conn_user_gt.commit()
         conn_user_gt.close()
 
 
-    def get_food_types(self):
+    def get_food_type(self):
         conn_food_nutrition = sql.connect('food_nutrition.db')
         cursor_food_nutrition = conn_food_nutrition.cursor()
-        food_types = []
+        food_type = []
         for food_item in self.food_items_quantity.keys():
             cursor_food_nutrition.execute('''
                 SELECT food_type FROM food_nutrition
@@ -87,9 +94,9 @@ class Meal:
                 )
             result = cursor_food_nutrition.fetchone()
             if result:
-                food_types.append(result[0])
+                food_type.append(result[0])
         conn_food_nutrition.close()
-        return food_types
+        return food_type
 
 
     def print_meal(self):
@@ -113,16 +120,18 @@ class Meal:
         cur = conn.cursor()
         cur.execute('''
             INSERT INTO food_nutrition
-                (food_name, food_type, calories, protein, carbohydrates, fats, vitamins, minerals)
+                (food_type, food_name, calories, protein, carbohydrates, fats, vitamins, minerals)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (food_name, food_type, calories_per_100g, protein_per_100g,
+            ''', (food_type, food_name, calories_per_100g, protein_per_100g,
                   carbs_per_100g, fats_per_100g, vitamins, minerals)
                   )
+        conn.commit()
+        conn.close()
         return cur.lastrowid
 
 
     @staticmethod
-    def get_food_type_by_name(food_name: str) -> Optional[str]:
+    def get_food_type_by_name(food_name: str) :
         """
         由 food_name 查詢 food_type
         """
@@ -137,4 +146,27 @@ class Meal:
         conn.close()
         if result:
             return result[0]
+        return None
+    
+    @staticmethod
+    def get_food_nutrition_by_name(food_name: str):
+        """
+        由 food_name 查詢 食物營養成分
+        """
+        conn = sql.connect("food_nutrition.db")
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT calories, protein, carbohydrates, fats FROM food_nutrition
+            WHERE food_name = ?
+            ''', (food_name,)
+            )
+        result = cur.fetchone()
+        conn.close()
+        if result:
+            return {
+                'calories': result[0],
+                'protein': result[1],
+                'carbohydrates': result[2],
+                'fats': result[3]
+            }
         return None

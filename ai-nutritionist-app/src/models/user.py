@@ -1,13 +1,13 @@
 import sqlite3 as sql
 
 class User:
-    def __init__(self, id, height, weight, sex, age, estimated_time, target_weight):
+    def __init__(self, id, height, weight, sex, age, estimated_days, target_weight):
         self.id = id
         self.height = height
         self.weight = weight
         self.sex = sex
         self.age = age
-        self.estimated_time = estimated_time
+        self.estimated_days = estimated_days
         self.target_weight = target_weight
 
 
@@ -17,7 +17,7 @@ class User:
         conn_user_history = sql.connect('user_history.db')
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
-            SELECT height, weight, sex, age, estimated_time, target_weight FROM users
+            SELECT height, weight, sex, age, estimated_days, target_weight FROM users
             WHERE user_id = ?
             ''', (user_id,)
             )
@@ -34,7 +34,7 @@ class User:
             weight=user_data[1],
             sex=user_data[2],
             age=user_data[3],
-            estimated_time=user_data[4],
+            estimated_days=user_data[4],
             target_weight=user_data[5]
             )
     
@@ -44,9 +44,9 @@ class User:
         conn_user_history = sql.connect('user_history.db')
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
-            INSERT INTO users (user_id, height, weight, sex, age, estimated_time, target_weight)
+            INSERT INTO users (user_id, height, weight, sex, age, estimated_days, target_weight)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (self.id, self.height, self.weight, self.sex, self.age, self.estimated_time, self.target_weight)
+            ''', (self.id, self.height, self.weight, self.sex, self.age, self.estimated_days, self.target_weight)
             )
         cursor_user_history.execute('''
             INSERT INTO weight_log (user_id, weight, log_time)
@@ -79,18 +79,18 @@ class User:
         conn_user_history.close()
 
 
-    def update_goal_to_db(self, new_estimated_time, new_target_weight):
-        self.estimated_time = new_estimated_time
+    def update_goal_to_db(self, new_estimated_days, new_target_weight):
+        self.estimated_days = new_estimated_days
         self.target_weight = new_target_weight
         conn_user_history = sql.connect('user_history.db')
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             UPDATE users
-            SET estimated_time = ?, target_weight = ?
-            WHERE id = ?
-            ''', (new_estimated_time, new_target_weight, self.id)
+            SET estimated_days = ?, target_weight = ?
+            WHERE user_id = ?
+            ''', (new_estimated_days, new_target_weight, self.id)
             )
-        print(f"User {self.id} goal updated: estimated_time={new_estimated_time}, target_weight={new_target_weight}.")
+        print(f"User {self.id} goal updated: estimated_days={new_estimated_days}, target_weight={new_target_weight}.")
         conn_user_history.commit()   
         conn_user_history.close()
 
@@ -109,7 +109,7 @@ class User:
         cursor_user_history.execute('''
             UPDATE users
             SET height = ?, weight = ?, sex = ?, age = ?
-            WHERE id = ?
+            WHERE user_id = ?
             ''', (self.height, self.weight, self.sex, self.age, self.id)
             )
         print(f"User {self.id} personal info updated.")
@@ -124,7 +124,7 @@ class User:
             "weight": self.weight,
             "sex": self.sex,
             "age": self.age,
-            "estimated_time": self.estimated_time,
+            "estimated_days": self.estimated_days,
             "target_weight": self.target_weight
         }
 
@@ -137,8 +137,8 @@ class User:
         conn_user_gt = sql.connect('user_pred.db')
         cursor_user_gt = conn_user_gt.cursor()
         cursor_user_gt.execute('''
-            SELECT food_preferences FROM users_preference
-            WHERE user_id = ? AND food_names = ?
+            SELECT food_preference FROM users_preference
+            WHERE user_id = ? AND food_name = ?
             ''', (self.id, food_name)
             )
         result = cursor_user_gt.fetchone()
@@ -150,8 +150,8 @@ class User:
         conn_user_gt = sql.connect('user_pred.db')
         cursor_user_gt = conn_user_gt.cursor()
         cursor_user_gt.execute('''
-            SELECT food_names, food_preferences FROM users_preference
-            WHERE user_id = ? AND food_types = ?
+            SELECT food_name, food_preference FROM users_preference
+            WHERE user_id = ? AND food_type = ?
             ''', (self.id, food_type)
             )
         preferences = cursor_user_gt.fetchall()

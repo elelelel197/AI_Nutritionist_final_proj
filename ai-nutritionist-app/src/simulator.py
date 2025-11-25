@@ -46,7 +46,7 @@ class Simulator:
         cursor_food_nutrition.execute('''
             SELECT food_type, food_name FROM food_nutrition
         ''')
-        food_types_names = cursor_food_nutrition.fetchall()
+        food_type_names = cursor_food_nutrition.fetchall()
         conn_food_nutrition.close()
 
         # Create users and insert their preferences and activity levels into the user.gt database
@@ -62,11 +62,11 @@ class Simulator:
                 target_weight = np.random.uniform(self.target_weight_range[0], self.target_weight_range[1])
             )
             
-            for food_tp_nm in food_types_names:
+            for food_tp_nm in food_type_names:
                 # Every food has a random preference score between 0 and 1
                 # Users have random activity levels
                 cursor_user_gt.execute('''
-                    INSERT INTO users_preference (user_id, food_types, food_names, food_preferences)
+                    INSERT INTO users_preference (user_id, food_type, food_name, food_preference)
                     VALUES (?, ?, ?, ?)
                     ''', (new_users[i].id, 
                           food_tp_nm[0], 
@@ -97,8 +97,8 @@ class Simulator:
         actual_meal = Meal(recommendation.food_items_quantity, recommendation.time)
         for food in food_items:
             cursor_user_gt.execute('''
-                SELECT food_types, food_preferences FROM users_preference                   
-                WHERE user_id = ? AND food_names = ?
+                SELECT food_type, food_preference FROM users_preference                   
+                WHERE user_id = ? AND food_name = ?
                 ''', (user.id, food)
                 )
             result = cursor_user_gt.fetchone()
@@ -112,8 +112,8 @@ class Simulator:
                 # prefered food of the same type would more likely be choosen 
                 # Quantity is based on recommended quantity
                 cursor_user_gt.execute('''
-                    SELECT food_names FROM users_preference
-                    WHERE user_id = ? and food_types = ? and food_names != ?
+                    SELECT food_name FROM users_preference
+                    WHERE user_id = ? and food_type = ? and food_name != ?
                     ''', (user.id, food_type, food)
                     )
                 food_type_preferences = cursor_user_gt.fetchall()
