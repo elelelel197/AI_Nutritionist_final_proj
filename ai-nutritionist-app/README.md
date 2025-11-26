@@ -18,7 +18,7 @@ ai-nutritionist-app
 │   ├── database
 │   │   ├── food_nutrition.sql # Nutritional information for various foods
 │   │   ├── recommended_intake.sql # Daily recommended nutrition intake
-│   │   └── user_history.sql    # User consumption and weight history
+│   │   └── from utils.nutrition_utils import NutritionUtilsory.sql    # User consumption and weight history
 │   ├── models
 │   │   ├── user.py            # User class definition
 │   │   ├── meal.py            # Meal class definition

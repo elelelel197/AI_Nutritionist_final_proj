@@ -5,43 +5,54 @@ from services.auth_service import AuthService
 from services.recommendation_service import RecommendationService
 from datetime import date
 import pandas as pd
-from algorithms import preference_algo, activity_lv_algo, weight_g_l_algo
+from algorithms.preference_algo import PreferenceAlgo
+from algorithms.activity_lv_algo import ActivityLvAlgo
+from algorithms.weight_g_l_algo import WeightGLAlgo
+import utils.file_paths as fp
 
 def main():
 
     while True:
+        print("----------------------------------------")
         print("Welcome to the AI Nutritionist App!")
         print("Press 0 to login")
         print("Press 1 to sign up")
+        print("Press 2 to exit")
+        print("----------------------------------------")
 
         command = input("Enter your command: ")
         user = None
         time = date.today()
-        if command == '0':
-            user_id = input("Enter your user ID: ")
-            user = AuthService.user_login(user_id)
-            if not user:
-                continue
-        elif command == '1':
-            if AuthService.is_max_users_reached():
-                print("Maximum number of users reached. Cannot register new users.")
-                continue
-            user_id = input("Choose a user ID: ")
-            height = float(input("Enter your height in cm: "))
-            weight = float(input("Enter your weight in kg: "))
-            sex = input("Enter your sex (M/F): ").upper()
-            age = int(input("Enter your age in years: "))
-            estimated_days = int(input("Enter your estimated days to reach target weight in 'F's: "))
-            target_weight = float(input("Enter your target weight in kg: "))
+        match command:
+            case '0':
+                user_id = input("Enter your user ID: ")
+                user = AuthService.user_login(user_id)
+                if not user:
+                    continue
+            case '1':
+                if AuthService.is_max_users_reached():
+                    print("Maximum number of users reached. Cannot register new users.")
+                    continue
+                user_id = input("Choose a user ID: ")
+                height = float(input("Enter your height in cm: "))
+                weight = float(input("Enter your weight in kg: "))
+                sex = input("Enter your sex (M/F): ").upper()
+                age = int(input("Enter your age in years: "))
+                estimated_days = int(input("Enter your estimated days to reach target weight in 'F's: "))
+                target_weight = float(input("Enter your target weight in kg: "))
 
-            user = AuthService.user_register(user_id, height, weight, sex, age, estimated_days, target_weight, time)
-            if not user:
+                user = AuthService.user_register(user_id, height, weight, sex, age, estimated_days, target_weight, time)
+                if not user:
+                    continue
+            case '2':
+                print("Exiting the AI Nutritionist App")
+                break
+            case _:
+                print("Invalid command. Please try again.")
                 continue
-        else:
-            print("Invalid command. Please try again.")
-            continue
         
         while True:
+            print("----------------------------------------")
             print(f"Welcome, {user.id}!")
             print("Press 0 to get a meal recommendation")
             print("Press 1 to log a meal")
@@ -51,6 +62,7 @@ def main():
             print("Press 5 to update user goal")
             print("Press 6 to logout")
             print("Press 7 to delete your account")
+            print("----------------------------------------")
             command = input("Enter your command: ")
             match command:
                 # Get meal recommendations
@@ -59,8 +71,6 @@ def main():
                     print("Recommended Meal:")
                     recommended_meal.print_meal()
                     recommended_meal.log_meal_into_db(user.id, 'recommended')
-                    # update model with new meal data
-                    # update prediction
                 # Log a meal
                 case '1':
                     meal = Meal({}, time)
@@ -76,10 +86,10 @@ def main():
                     meal.log_meal_into_db(user.id, 'actual')
                     food_name_list = pd.Series(list(meal.food_items_quantity.keys())).unique()
                     # update preference model with new meal data
-                    preference_model = preference_algo.train_or_update_model()
+                    preference_model = PreferenceAlgo.train_or_update_model()
                     # update preference prediction
                     for food in food_name_list:
-                        preference_score = preference_algo.predict_preference(
+                        preference_score = PreferenceAlgo.predict_preference(
                             preference_model, user.id, food, 0, meal.food_items_quantity[food], food_name_list)
                         print(f'Updated preference probability for {food}: {preference_score}')
                 # Add food items to database
@@ -88,21 +98,21 @@ def main():
                     food_type = input("Enter food type (e.g., fruit, vegetable, meat): ")
                     calories = float(input("Enter calories per 100g: "))
                     protein = float(input("Enter protein per 100g: "))
-                    carbs = float(input("Enter carbs per 100g: "))
+                    carbohydrates = float(input("Enter carbohydrates per 100g: "))
                     fats = float(input("Enter fats per 100g: "))
-                    Meal.add_food_item(food_name, food_type, calories, protein, carbs, fats)
+                    Meal.add_food_item(food_name, food_type, calories, protein, carbohydrates, fats)
                 # Update weight
                 case '3':
                     new_weight = float(input("Enter your new weight in kg: "))
                     user.update_weight(new_weight, time)
                     # update activity level model with new weight data
-                    X, y, activity_categories = activity_lv_algo.fetch_activity_data()
-                    activity_model = activity_lv_algo.train_or_update_model(X, y)
+                    X, y, activity_categories = ActivityLvAlgo.fetch_activity_data()
+                    activity_model = ActivityLvAlgo.train_or_update_model(X, y)
                     # update activity level prediction
-                    predicted_level = activity_lv_algo.predict_activity_level(activity_model, user, activity_categories)
+                    predicted_level = ActivityLvAlgo.predict_activity_level(activity_model, user, activity_categories)
                     print(f"Updated activity level: {predicted_level}")
                     # update weight gain/loss model with new weight data
-                    factors = weight_g_l_algo.update_weight_gain_loss_factor(user)
+                    factors = WeightGLAlgo.update_weight_gain_loss_factor(user)
                     print(f"Updated weight gain/loss factors: {factors}")
                 # Update user info
                 case '4':

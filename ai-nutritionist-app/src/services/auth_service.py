@@ -1,7 +1,9 @@
+import os
 from models.user import User
 import sqlite3 as sql
 from typing import List, Dict, Optional, Any
 import datetime
+import utils.file_paths as fp
 
 MAX_USERS = 3000
 
@@ -12,7 +14,7 @@ class AuthService:
 
     @staticmethod
     def total_users():
-        conn_user_history = sql.connect('user_history.db')
+        conn_user_history = sql.connect(fp.get_user_history_db_path())
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             SELECT COUNT(*) FROM users
@@ -24,7 +26,7 @@ class AuthService:
 
     @staticmethod
     def is_max_users_reached(max_users=MAX_USERS):
-        conn_user_history = sql.connect('user_history.db')
+        conn_user_history = sql.connect(fp.get_user_history_db_path())
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             SELECT COUNT(*) FROM users

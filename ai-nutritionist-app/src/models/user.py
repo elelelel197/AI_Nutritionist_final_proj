@@ -1,4 +1,5 @@
 import sqlite3 as sql
+import utils.file_paths as fp
 
 class User:
     def __init__(self, id, height, weight, sex, age, estimated_days, target_weight):
@@ -14,7 +15,7 @@ class User:
     # Load user from the database using user ID
     @classmethod
     def load_user_from_db(cls, user_id):
-        conn_user_history = sql.connect('user_history.db')
+        conn_user_history = sql.connect(fp.get_user_history_db_path())
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             SELECT height, weight, sex, age, estimated_days, target_weight FROM users
@@ -41,7 +42,7 @@ class User:
 
     # Log the user into the user_history database
     def log_user_to_db(self, time):
-        conn_user_history = sql.connect('user_history.db')
+        conn_user_history = sql.connect(fp.get_user_history_db_path())
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             INSERT INTO users (user_id, height, weight, sex, age, estimated_days, target_weight)
@@ -61,7 +62,7 @@ class User:
     # Update user attributes        
     def update_weight(self, new_weight, time):
         self.weight = new_weight
-        conn_user_history = sql.connect('user_history.db')
+        conn_user_history = sql.connect(fp.get_user_history_db_path())
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             UPDATE users
@@ -82,7 +83,7 @@ class User:
     def update_goal_to_db(self, new_estimated_days, new_target_weight):
         self.estimated_days = new_estimated_days
         self.target_weight = new_target_weight
-        conn_user_history = sql.connect('user_history.db')
+        conn_user_history = sql.connect(fp.get_user_history_db_path())
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             UPDATE users
@@ -104,7 +105,7 @@ class User:
             self.sex = sex
         if age is not None:
             self.age = age
-        conn_user_history = sql.connect('user_history.db')
+        conn_user_history = sql.connect(fp.get_user_history_db_path())
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             UPDATE users
@@ -134,7 +135,7 @@ class User:
     
 
     def get_user_food_preference(self, food_name):
-        conn_user_gt = sql.connect('user_pred.db')
+        conn_user_gt = sql.connect(fp.get_user_pred_db_path())
         cursor_user_gt = conn_user_gt.cursor()
         cursor_user_gt.execute('''
             SELECT food_preference FROM users_preference
@@ -147,7 +148,7 @@ class User:
 
 
     def get_user_food_preference_of_type(self, food_type):
-        conn_user_gt = sql.connect('user_pred.db')
+        conn_user_gt = sql.connect(fp.get_user_pred_db_path())
         cursor_user_gt = conn_user_gt.cursor()
         cursor_user_gt.execute('''
             SELECT food_name, food_preference FROM users_preference
@@ -161,7 +162,7 @@ class User:
 
 
     def get_user_activity_level(self):
-        conn_user_gt = sql.connect('user_pred.db')
+        conn_user_gt = sql.connect(fp.get_user_pred_db_path())
         cursor_user_gt = conn_user_gt.cursor()
         cursor_user_gt.execute('''
             SELECT activity_level FROM users_activity_level
@@ -174,7 +175,7 @@ class User:
     
 
     def get_user_weight_gain_loss_factor(self):
-        conn_user_gt = sql.connect('user_pred.db')
+        conn_user_gt = sql.connect(fp.get_user_pred_db_path())
         cursor_user_gt = conn_user_gt.cursor()
         cursor_user_gt.execute('''
             SELECT weight_gain_factor, weight_loss_factor FROM user_weight_gain_loss_factor
@@ -188,7 +189,7 @@ class User:
 
     # delete user from database
     def delete_user_from_db(self):
-        conn_user_history = sql.connect('user_history.db')
+        conn_user_history = sql.connect(fp.get_user_history_db_path())
         cursor_user_history = conn_user_history.cursor()
         cursor_user_history.execute('''
             DELETE FROM users

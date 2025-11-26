@@ -6,8 +6,8 @@ CREATE TABLE food_nutrition (
     carbohydrates FLOAT NOT NULL,
     fats FLOAT NOT NULL,
     vitamins TEXT,
-    minerals TEXT,
-)
+    minerals TEXT
+);
 
 INSERT INTO food_nutrition (food_type, food_name, calories, protein, carbohydrates, fats, vitamins, minerals) VALUES
     -- Grains (1-34)
@@ -197,7 +197,7 @@ INSERT INTO food_nutrition (food_type, food_name, calories, protein, carbohydrat
     ('dairy', 'Butter', 717, 0.9, 0.1, 81, 'Vitamin A', 'Calcium'),
     ('dairy', 'Cottage Cheese', 98, 11, 3.4, 4.3, 'Vitamin B12', 'Calcium'),
     ('dairy', 'Cream', 340, 2, 3, 37, 'Vitamin A', 'Calcium'),
-    ('dairy', 'Ice Cream', 207, 3.5, 24, 11, 'Vitamin A', 'Calcium'),
+    ('dairy', 'Ice Cream', 207, 3.5, 24, 11, 'Vitamin AMi', 'Calcium'),
     ('dairy', 'Kefir', 41, 3.3, 4.8, 1, 'Vitamin B12', 'Calcium'),
     ('dairy', 'Ricotta', 174, 11, 3, 13, 'Vitamin A', 'Calcium'),
     ('dairy', 'Skim Milk', 35, 3.4, 5, 0.1, 'Vitamin D', 'Calcium'),
@@ -220,4 +220,4 @@ INSERT INTO food_nutrition (food_type, food_name, calories, protein, carbohydrat
     ('dairy', 'Cheddar', 403, 25, 1.3, 33, 'Vitamin A', 'Calcium'),
     ('dairy', 'Brie', 334, 21, 0.5, 28, 'Vitamin A', 'Calcium'),
     ('dairy', 'Camembert', 299, 20, 0.5, 24, 'Vitamin A', 'Calcium'),
-    ('dairy', 'Emmental', 380, 28, 1.5, 30, 'Vitamin A', 'Calcium')
+    ('dairy', 'Emmental', 380, 28, 1.5, 30, 'Vitamin A', 'Calcium');
