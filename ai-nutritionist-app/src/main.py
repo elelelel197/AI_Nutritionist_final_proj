@@ -38,7 +38,7 @@ def main():
                 weight = float(input("Enter your weight in kg: "))
                 sex = input("Enter your sex (M/F): ").upper()
                 age = int(input("Enter your age in years: "))
-                estimated_days = int(input("Enter your estimated days to reach target weight in 'F's: "))
+                estimated_days = int(input("Enter your estimated days to reach target weight in days: "))
                 target_weight = float(input("Enter your target weight in kg: "))
 
                 user = AuthService.user_register(user_id, height, weight, sex, age, estimated_days, target_weight, time)

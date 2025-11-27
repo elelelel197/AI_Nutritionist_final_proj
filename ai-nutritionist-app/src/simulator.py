@@ -3,6 +3,7 @@ from unittest import result
 import numpy as np
 import sqlite3 as sql
 import uuid
+import csv
 import pandas as pd
 from models.user import User
 from models.meal import Meal
@@ -72,7 +73,6 @@ class Simulator:
             
             for food_tp_nm in food_type_names:
                 # Every food has a random preference score between 0 and 1
-                # Users have random activity levels
                 cursor_user_gt.execute('''
                     INSERT INTO users_preference (user_id, food_type, food_name, food_preference)
                     VALUES (?, ?, ?, ?)
@@ -82,13 +82,15 @@ class Simulator:
                           np.random.rand()
                           )
                     )
-                cursor_user_gt.execute('''
-                    INSERT INTO users_activity_level (user_id, activity_level)
-                    VALUES (?, ?)
-                    ''', (new_users[i].id, 
-                          np.random.choice(['sedentary', 'lightly active', 'moderately active', 'very active', 'super active'])
-                          )
+                
+            # Users have random activity levels
+            cursor_user_gt.execute('''
+                INSERT INTO users_activity_level (user_id, activity_level)
+                VALUES (?, ?)
+                ''', (new_users[i].id, 
+                    np.random.choice(['sedentary', 'lightly active', 'moderately active', 'very active', 'super active'])
                     )
+                )
 
         print(f"{amount} users created and inserted into the databases.")
         conn_user_gt.commit()   
@@ -102,18 +104,16 @@ class Simulator:
         conn_user_gt = sql.connect(fp.get_user_gt_db_path())
         cursor_user_gt = conn_user_gt.cursor()
         food_items = list(recommendation.food_items_quantity.keys())
-        actual_meal = Meal(recommendation.food_items_quantity, recommendation.time)
+        actual_meal = Meal(recommendation.food_items_quantity.copy(), recommendation.time)
         for food in food_items:
             cursor_user_gt.execute('''
                 SELECT food_type, food_preference FROM users_preference                   
                 WHERE user_id = ? AND food_name = ?
                 ''', (user.id, food)
-                )
-            result = cursor_user_gt.fetchone()
-            if result is None:
-                continue
-            food_type = result[0]
-            food_preference = result[1]
+            )
+            result = cursor_user_gt.fetchone() 
+            food_type = result[0] if result else 'nan'
+            food_preference = result[1] if result else 0.5
             if np.random.rand() < food_preference:
                 # User eats more of preferred food
                 actual_meal.food_items_quantity[food] *= np.random.normal(loc=food_preference + 0.5, scale=CONSUMED_FOOD_QUANTITY_NOISE_STDDEV)
@@ -134,7 +134,6 @@ class Simulator:
                 substitution_preference = food_type_preferences[idx][1]
                 actual_meal.food_items_quantity[substitution_food] = actual_meal.food_items_quantity.pop(food) * np.random.normal(loc=substitution_preference + 0.5, scale=CONSUMED_FOOD_QUANTITY_NOISE_STDDEV)
         conn_user_gt.close()
-        print(f"Meal logged for user {user.id}.")
         return actual_meal 
 
 
@@ -176,34 +175,132 @@ class Simulator:
         return new_weight
 
 
+
 if __name__ == "__main__":
     simulator = Simulator()
-    # Generate 5 random users
     users = simulator.generate_user(amount=5)
+    user_info_results = []
+    meal_results = []
+    comparison_results = []
+
     for user in users:
+        user.log_user_to_db(time=date.today())
+        user_info_results.append({
+            "user_id": user.id,
+            "height": round(user.height, 2),
+            "weight": round(user.weight, 2),
+            "sex": user.sex,
+            "age": user.age,
+            "estimated_days": user.estimated_days,
+            "target_weight": round(user.target_weight, 2)
+        })
         print(f"User ID: {user.id}, Height: {user.height:.2f} cm, Weight: {user.weight:.2f} kg")
-    # In 30 days, all users gets recommendation and log meals and record weight
+
     for day in range(30):
         time = date.today() + timedelta(days=day)
         for user in users:
             recommended_meal = RecommendationService.get_meal_recommendations(user, time)
             recommended_meal.log_meal_into_db(user.id, 'recommended')
-            # Simulate meal consumption
             actual_meal = simulator.simulate_meal_consumption(user, recommended_meal)
             actual_meal.log_meal_into_db(user.id, 'actual')
-            # Update user preference model with actual meal data
             food_name_list = pd.Series(list(actual_meal.food_items_quantity.keys())).unique()
             preference_model = PreferenceAlgo.train_or_update_model()
             for food in food_name_list:
                 preference_score = PreferenceAlgo.predict_preference(
                     preference_model, user.id, food, 0, actual_meal.food_items_quantity[food], food_name_list)
-            # Simulate weight change
             new_weight = simulator.simulate_weight_change(user, days_passed=1, total_caloric_intake=actual_meal.calculate_nutritional_values()['calories'])
             user.update_weight(new_weight, time)
-            # Update activity level model with new weight data
             X, y, activity_categories = ActivityLvAlgo.fetch_activity_data()
             activity_model = ActivityLvAlgo.train_or_update_model(X, y)
             predicted_level = ActivityLvAlgo.predict_activity_level(activity_model, user, activity_categories)
-            # Update weight gain/loss model with new weight data
             factors = WeightGLAlgo.update_weight_gain_loss_factor(user)
-            print(f"Day {day+1}, User {user.id}: New Weight: {new_weight:.2f} kg, Activity Level: {predicted_level}, Weight Gain/Loss Factors: {factors}")
+
+            # --- Collect user_pred and user_gt info ---
+            # Connect to both databases
+            conn_pred = sql.connect(fp.get_user_pred_db_path())
+            conn_gt = sql.connect(fp.get_user_gt_db_path())
+            cursor_pred = conn_pred.cursor()
+            cursor_gt = conn_gt.cursor()
+
+            # Food preference: collect as a string for each user
+            cursor_pred.execute("SELECT food_name, food_preference FROM users_preference WHERE user_id = ?", (user.id,))
+            pred_prefs = "; ".join([f"{row[0]}:{row[1]:.2f}" for row in cursor_pred.fetchall()])
+            cursor_gt.execute("SELECT food_name, food_preference FROM users_preference WHERE user_id = ?", (user.id,))
+            gt_prefs = "; ".join([f"{row[0]}:{row[1]:.2f}" for row in cursor_gt.fetchall()])
+
+            # Activity level
+            cursor_pred.execute("SELECT activity_level FROM users_activity_level WHERE user_id = ?", (user.id,))
+            pred_act = cursor_pred.fetchone()
+            pred_act = pred_act[0] if pred_act else ""
+            cursor_gt.execute("SELECT activity_level FROM users_activity_level WHERE user_id = ?", (user.id,))
+            gt_act = cursor_gt.fetchone()
+            gt_act = gt_act[0] if gt_act else ""
+
+            # Weight gain/loss factor
+            cursor_pred.execute("SELECT weight_gain_factor, weight_loss_factor FROM user_weight_gain_loss_factor WHERE user_id = ?", (user.id,))
+            pred_wgl = cursor_pred.fetchone()
+            pred_gain = pred_wgl[0] if pred_wgl else ""
+            pred_loss = pred_wgl[1] if pred_wgl else ""
+            
+
+            comparison_results.append({
+                "day": day + 1,
+                "user_id": user.id,
+                "date": time.strftime("%Y-%m-%d"),
+                "pred_food_preference": pred_prefs,
+                "gt_food_preference": gt_prefs,
+                "pred_activity_level": pred_act,
+                "gt_activity_level": gt_act,
+                "pred_weight_gain_factor": pred_gain,
+                "pred_weight_loss_factor": pred_loss,
+                "gt_weight_gain_factor": 'nan',
+                "gt_weight_loss_factor": 'nan'
+            })
+
+            conn_pred.close()
+            conn_gt.close()
+            # --- End collect ---
+
+            meal_results.append({
+                "user_id": user.id,
+                "day": day + 1,
+                "date": time.strftime("%Y-%m-%d"),
+                "weight": round(new_weight, 2),
+                "recommended_meal": "; ".join([f"{k}:{v:.2f}" for k, v in recommended_meal.food_items_quantity.items()]),
+                "actual_meal": "; ".join([f"{k}:{v:.2f}" for k, v in actual_meal.food_items_quantity.items()]),
+                "calories": round(actual_meal.calculate_nutritional_values()['calories'], 2)
+            })
+
+    # Write user info to CSV
+    with open("user_info.csv", "w", newline='', encoding="utf-8") as csvfile:
+        fieldnames = ["user_id", "height", "weight", "sex", "age", "estimated_days", "target_weight"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in user_info_results:
+            writer.writerow(row)
+    print("User information saved to user_info.csv")
+
+    # Write meal results to CSV, sorted by user_id
+    meal_results_sorted = sorted(meal_results, key=lambda x: x["user_id"])
+    with open("user_meals.csv", "w", newline='', encoding="utf-8") as csvfile:
+        fieldnames = ["user_id", "day", "date", "weight", "recommended_meal", "actual_meal", "calories"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in meal_results_sorted:
+            writer.writerow(row)
+    print("Meal simulation results saved to user_meals.csv")
+
+    # Write comparison results to CSV
+    with open("user_pred_gt_comparison.csv", "w", newline='', encoding="utf-8") as csvfile:
+        fieldnames = [
+            "day", "user_id", "date",
+            "pred_food_preference", "gt_food_preference",
+            "pred_activity_level", "gt_activity_level",
+            "pred_weight_gain_factor", "pred_weight_loss_factor",
+            "gt_weight_gain_factor", "gt_weight_loss_factor"
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in comparison_results:
+            writer.writerow(row)
+    print("Prediction vs Ground Truth comparison saved to user_pred_gt_comparison.csv")
